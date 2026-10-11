@@ -188,8 +188,8 @@ tables.
 ## Installation (local)
 
 ```sh
-git clone https://github.com/Tazib/tomzn63t-meter-monitor.git energy-tracker
-cd energy-tracker
+git clone https://github.com/Tazib/smartbreaker-solar-billing.git
+cd smartbreaker-solar-billing
 cp .env.example .env
 ```
 
