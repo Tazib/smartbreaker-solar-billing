@@ -288,6 +288,7 @@ function BreakerList({ devices, showMeter }: { devices: ViewDevice[]; showMeter:
                     {d.live?.voltageV != null && `${d.live.voltageV.toFixed(0)} V`}
                     {d.live?.currentA != null && ` · ${d.live.currentA.toFixed(2)} A`}
                     {d.live?.leakageMa != null && d.live.leakageMa > 0 && ` · leak ${d.live.leakageMa} mA`}
+                    {d.live?.inverterW != null && d.live.inverterW > 0 && ` · ${watts(d.live.inverterW)} from inverter (ATS)`}
                   </>
                 ) : (
                   <>

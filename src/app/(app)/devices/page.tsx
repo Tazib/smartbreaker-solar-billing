@@ -24,6 +24,7 @@ import {
   disconnectDeye,
   setDeviceActive,
   setStationActive,
+  updateAtsWindow,
   updateDevice,
   updateStation,
 } from "./actions";
@@ -74,6 +75,7 @@ export default async function DevicesPage() {
           profile={p}
           meters={meters.filter((m) => m.profileId === p.id)}
           devices={devices.filter((d) => d.profileId === p.id).map((d) => d.device)}
+          stations={stations.filter((s) => s.profileId === p.id)}
           admin={admin}
         />
       ))}
@@ -96,11 +98,13 @@ async function ProfileDevices({
   profile,
   meters,
   devices,
+  stations,
   admin,
 }: {
   profile: { id: string; name: string; tuyaUid: string | null };
   meters: Meter[];
   devices: Device[];
+  stations: Station[];
   admin: boolean;
 }) {
   let tuyaDevices: TuyaDevice[] = [];
@@ -152,6 +156,12 @@ async function ProfileDevices({
                   {d.inverterInputDeviceId &&
                     ` · inverter input: ${devices.find((x) => x.id === d.inverterInputDeviceId)?.name ?? "?"}`}
                 </div>
+                {d.atsStationId && d.atsStart && d.atsEnd && (
+                  <div className="text-sm text-muted-foreground">
+                    ATS {d.atsStart}–{d.atsEnd}: extra load on {stations.find((x) => x.id === d.atsStationId)?.name ?? "the inverter"} is
+                    left out of grid usage
+                  </div>
+                )}
                 <div className="text-sm text-muted-foreground tabular-nums">
                   Counter {d.lastEnergyKwh ? `${Number(d.lastEnergyKwh).toFixed(2)} kWh` : "—"}
                   {d.lastSeenAt && ` · last reading ${formatDistanceToNow(d.lastSeenAt, { addSuffix: true })}`}
@@ -197,6 +207,7 @@ async function ProfileDevices({
                     </SubmitButton>
                   </div>
                 </ActionForm>
+                {d.source === "grid" && stations.length > 0 && <AtsWindowForm device={d} stations={stations} />}
               </details>
             </div>
           ))}
@@ -564,5 +575,51 @@ function StationFields({
         inverter&apos;s grid input, so it isn&apos;t counted twice.
       </p>
     </>
+  );
+}
+
+/** Daily window when part of this breaker's load runs from a Deye inverter through an ATS. */
+function AtsWindowForm({ device, stations }: { device: Device; stations: Station[] }) {
+  const id = (field: string) => `${device.id}-ats-${field}`;
+  return (
+    <ActionForm
+      action={updateAtsWindow}
+      resetOnSuccess={false}
+      className="mt-5 grid gap-4 border-t border-border pt-4 sm:grid-cols-2 lg:grid-cols-4 lg:items-end"
+    >
+      <input type="hidden" name="deviceId" value={device.id} />
+      <div className="grid gap-1 sm:col-span-2 lg:col-span-4">
+        <h4 className="text-sm font-medium">ATS window</h4>
+        <p className="text-xs text-muted-foreground">
+          If an ATS moves some of this breaker&apos;s load onto the inverter at set times, the inverter counts that load too. During
+          the window, the rise in the inverter&apos;s load over its level in the 30 minutes before is left out of this breaker&apos;s
+          grid usage (never more than the breaker reads). Applies from now on.
+        </p>
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor={id("station")}>Inverter</Label>
+        <NativeSelect id={id("station")} name="atsStationId" defaultValue={device.atsStationId ?? ""}>
+          <option value="">No ATS</option>
+          {stations.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </NativeSelect>
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor={id("start")}>From</Label>
+        <Input id={id("start")} name="atsStart" type="time" defaultValue={device.atsStart ?? "10:00"} />
+      </div>
+      <div className="grid gap-2">
+        <Label htmlFor={id("end")}>To</Label>
+        <Input id={id("end")} name="atsEnd" type="time" defaultValue={device.atsEnd ?? "16:00"} />
+      </div>
+      <div>
+        <SubmitButton variant="outline" size="sm">
+          Save ATS window
+        </SubmitButton>
+      </div>
+    </ActionForm>
   );
 }

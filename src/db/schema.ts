@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   bigserial,
   boolean,
   check,
@@ -204,6 +205,11 @@ export const devices = pgTable(
     // solar only: the grid 63T on the inverter's input.
     inverterInputDeviceId: uuid("inverter_input_device_id"),
     energyScale: integer("energy_scale").notNull().default(2), // forward_energy_total / 10^scale = kWh
+    // ATS window: during these Dhaka times part of this breaker's load runs from a Deye inverter, which also
+    // counts it. The extra inverter load (vs the 30 minutes before the window) is moved out of grid usage.
+    atsStart: text("ats_start"), // "HH:MM"
+    atsEnd: text("ats_end"),
+    atsStationId: uuid("ats_station_id").references((): AnyPgColumn => solarStations.id, { onDelete: "set null" }),
     active: boolean("active").notNull().default(true),
     // Poller state
     lastEnergyKwh: numeric("last_energy_kwh", { precision: 14, scale: 3 }),
@@ -277,6 +283,8 @@ export const readings = pgTable(
     frequencyHz: doublePrecision("frequency_hz"),
     leakageMa: doublePrecision("leakage_ma"),
     tempC: doublePrecision("temp_c"),
+    // Part of powerW fed by an inverter through an ATS (not grid), when the device has an ATS window.
+    inverterW: doublePrecision("inverter_w"),
   },
   (t) => [index("readings_device_ts_idx").on(t.deviceId, t.ts)],
 );
@@ -289,7 +297,10 @@ export const dailyEnergy = pgTable(
       .notNull()
       .references(() => devices.id, { onDelete: "cascade" }),
     day: date("day").notNull(),
+    // Grid kWh only: this is what bills count.
     kwh: numeric("kwh", { precision: 12, scale: 3 }).notNull().default("0"),
+    // kWh the breaker saw that came from an inverter through an ATS (already left out of `kwh`).
+    inverterKwh: numeric("inverter_kwh", { precision: 12, scale: 3 }).notNull().default("0"),
   },
   (t) => [primaryKey({ columns: [t.deviceId, t.day] })],
 );

@@ -92,7 +92,8 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
           .select({
             deviceId: schema.readings.deviceId,
             bucket: sql<number>`(floor(extract(epoch from ${schema.readings.ts}) / ${sql.raw(String(BUCKET_SECONDS))}) * ${sql.raw(String(BUCKET_SECONDS))})::bigint`,
-            powerW: sql<number | null>`avg(${schema.readings.powerW})`,
+            // Grid only: minus any part an inverter feeds through an ATS.
+            powerW: sql<number | null>`avg(${schema.readings.powerW} - coalesce(${schema.readings.inverterW}, 0))`,
           })
           .from(schema.readings)
           .where(and(inArray(schema.readings.deviceId, ids), gte(schema.readings.ts, dayStart)))
@@ -120,7 +121,8 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
 
       const livePower = (set: Set<string>) => {
         const rows = withLive.filter((d) => set.has(d.id) && d.live?.powerW != null);
-        return rows.length ? rows.reduce((s, d) => s + d.live!.powerW!, 0) : null;
+        // Grid breakers: leave out what an inverter feeds through an ATS (it is counted on the inverter).
+        return rows.length ? rows.reduce((s, d) => s + d.live!.powerW! - (isGrid.has(d.id) ? (d.live!.inverterW ?? 0) : 0), 0) : null;
       };
 
       // Deye inverters: solar = panel output; grid = what an unmetered inverter buys (no breaker sees it).

@@ -10,6 +10,7 @@ import { listUserDevices } from "@/lib/tuya/client";
 import { hasEnergyCounter, parseStatus } from "@/lib/tuya/decode";
 import { checkLogin, hashDeyePassword, listStations } from "@/lib/deye/client";
 import { profileDeyeAccount } from "@/lib/deye/accounts";
+import { isTime } from "@/lib/ats";
 
 /** Loads a tracked device and checks the user may manage its profile. */
 async function deviceForUser(user: { id: string; role?: string | null }, deviceId: string) {
@@ -335,4 +336,49 @@ export async function deleteStation(_: ActionResult | null, formData: FormData):
   }
   revalidatePath("/", "layout");
   return { ok: true, message: "Inverter and its data removed" };
+}
+
+// ---------------------------------------------------------------- ATS window
+
+const atsSchema = z.object({
+  deviceId: z.uuid(),
+  atsStationId: z.string().transform((v) => v || null).pipe(z.uuid().nullable()),
+  atsStart: z.string(),
+  atsEnd: z.string(),
+});
+
+/**
+ * Sets (or clears, with no inverter picked) the daily window when part of a grid breaker's load is
+ * switched onto a Deye inverter through an ATS. Applies from the next poll; past usage is unchanged.
+ */
+export async function updateAtsWindow(_: ActionResult | null, formData: FormData): Promise<ActionResult> {
+  const user = await requireUser();
+  const parsed = atsSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { ok: false, message: parsed.error.issues[0].message };
+  const { deviceId, atsStationId, atsStart, atsEnd } = parsed.data;
+
+  try {
+    const { device, profileId } = await deviceForUser(user, deviceId);
+    if (device.source !== "grid") return { ok: false, message: "Only grid breakers can have an ATS window" };
+
+    if (!atsStationId) {
+      await db.update(schema.devices).set({ atsStart: null, atsEnd: null, atsStationId: null }).where(eq(schema.devices.id, deviceId));
+      revalidatePath("/devices");
+      return { ok: true, message: "ATS window removed" };
+    }
+
+    if (!isTime(atsStart) || !isTime(atsEnd)) return { ok: false, message: "Enter both times as HH:MM" };
+    if (atsStart === atsEnd) return { ok: false, message: "Start and end can't be the same time" };
+    const [station] = await db
+      .select({ id: schema.solarStations.id })
+      .from(schema.solarStations)
+      .where(and(eq(schema.solarStations.id, atsStationId), eq(schema.solarStations.profileId, profileId)));
+    if (!station) return { ok: false, message: "Pick an inverter from this profile" };
+
+    await db.update(schema.devices).set({ atsStart, atsEnd, atsStationId }).where(eq(schema.devices.id, deviceId));
+  } catch (e) {
+    return { ok: false, message: errorMessage(e) };
+  }
+  revalidatePath("/", "layout");
+  return { ok: true, message: `ATS window saved: ${atsStart}–${atsEnd}. It applies from the next minute.` };
 }
