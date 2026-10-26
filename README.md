@@ -53,6 +53,10 @@ The app is **read-only** towards your devices. It never switches a breaker or ch
 - Each profile connects **its own Deye account**, so several households can each link their own inverters.
 - The poller loads up to a year of daily history from Deye when an inverter is first linked.
 - Non-Deye inverters still work with a pair of breakers (inverter input + output).
+- **ATS windows**: if an ATS moves some of a breaker's load onto an inverter at set hours, set the window on
+  that breaker. During it, the rise in the inverter's load over its level in the 30 minutes before is taken
+  out of the breaker's grid usage, so nothing is counted twice. The saving for that share is priced on the
+  breaker's own meter.
 
 ### Bills and tariffs
 - Bangladesh **telescopic slab** billing, with the **lifeline** rate, **demand charge** per sanctioned kW,

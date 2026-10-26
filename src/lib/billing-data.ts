@@ -1,6 +1,6 @@
 // Loads tariffs and usage from the database and turns them into bills.
 // No "server-only" so the poller can finalise bills too.
-import { and, asc, between, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, between, desc, eq, inArray, lte, sql, type SQL } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { addDays, solarSaving, computeBill, cycleFor, daysBetween, daysLeft, marginalCost, type Bill, type Cycle, type MeterCharges, type Tariff } from "@/lib/billing";
 import { dhakaDay } from "@/lib/energy";
@@ -68,6 +68,16 @@ export async function deviceKwh(deviceIds: string[], start: string, end: string)
     .groupBy(schema.dailyEnergy.deviceId);
   for (const r of rows) out.set(r.deviceId, Number(r.kwh));
   return out;
+}
+
+/** kWh breakers saw that an inverter fed through an ATS, between two days (inclusive). */
+async function atsKwh(where: SQL, start: string, end: string) {
+  const [row] = await db
+    .select({ kwh: sql<string>`coalesce(sum(${schema.dailyEnergy.inverterKwh}), 0)` })
+    .from(schema.dailyEnergy)
+    .innerJoin(schema.devices, eq(schema.devices.id, schema.dailyEnergy.deviceId))
+    .where(and(where, between(schema.dailyEnergy.day, start, end)));
+  return Number(row?.kwh ?? 0);
 }
 
 /** Deye totals per station between two days (inclusive). */
@@ -166,10 +176,16 @@ export async function meterBill(meter: Meter, cycle: Cycle, endOverride?: string
   const charges = meterCharges(meter);
   const bill = computeBill(kwh, t.tariff, charges);
 
+  // ATS: load on this meter's breakers that an inverter fed (it would have come through this meter),
+  // and load this meter's inverters fed to breakers elsewhere (it would not have come through here).
+  const atsIn = await atsKwh(eq(schema.devices.meterId, meter.id), cycle.start, end);
+  const atsOut = stations.length ? await atsKwh(inArray(schema.devices.atsStationId, stations.map((s) => s.id)), cycle.start, end) : 0;
+
   let solarResult: SolarResult | null = null;
-  if (solar.length || stations.length) {
+  if (solar.length || stations.length || atsIn > 0) {
     const deyeTotal = (key: "consumption" | "purchase") => stations.reduce((s, st) => s + (deye.get(st.id)?.[key] ?? 0), 0);
-    const outputKwh = sum(solar.map((d) => d.id)) + deyeTotal("consumption");
+    // Each meter is valued on its own tariff for the load it would have carried without the inverter.
+    const outputKwh = Math.max(sum(solar.map((d) => d.id)) + deyeTotal("consumption") - atsOut + atsIn, 0);
     const inputKwh = sum(inputIds) + deyeTotal("purchase");
     solarResult = { outputKwh, inputKwh, ...solarSaving(kwh, inputKwh, outputKwh, t.tariff, charges) };
   }

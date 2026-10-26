@@ -180,3 +180,20 @@ describe("solarSaving with Deye figures (no breakers on the inverter)", () => {
     expect(solarSaving(190, 40, 40, tariff, meter).saving).toBe(0);
   });
 });
+
+describe("solar saving with an ATS moving a house onto another meter's inverter", () => {
+  // Server room meter: 120 kWh, inverter bought 30 kWh and its loads used 200 kWh, of which 60 kWh was the
+  // house (switched over by the ATS). House meter: 180 kWh on the grid after the 60 kWh were taken off.
+  const server = { meterKwh: 120, bought: 30, inverterLoad: 200, ats: 60 };
+  const house = { meterKwh: 180 };
+
+  it("values each share on the meter it would have gone through", () => {
+    const serverSaving = solarSaving(server.meterKwh, server.bought, server.inverterLoad - server.ats, tariff, meter).saving;
+    const houseSaving = solarSaving(house.meterKwh, 0, server.ats, tariff, meter).saving;
+    // Without the inverter: server room 120 − 30 + 140 = 230 kWh, house 180 + 60 = 240 kWh.
+    const expected =
+      computeBill(230, tariff, meter).total - computeBill(120, tariff, meter).total +
+      (computeBill(240, tariff, meter).total - computeBill(180, tariff, meter).total);
+    expect(serverSaving + houseSaving).toBeCloseTo(expected, 2);
+  });
+});

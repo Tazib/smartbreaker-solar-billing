@@ -129,6 +129,15 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
       const isStation = new Set(ownStations.map((s) => s.id));
       const unmetered = new Set(ownStations.filter((s) => !s.gridDrawMetered).map((s) => s.id));
       const stationLive = (solar?.latest ?? []).filter((r) => isStation.has(r.stationId) && now.getTime() - r.ts.getTime() < SOLAR_LIVE_WINDOW_MS);
+      // ATS: the part of this meter's breakers an inverter is feeding now (shown as solar, not grid),
+      // and the part this meter's inverters feed to breakers on any meter.
+      const atsLive = sumNullable(withLive.filter((d) => isGrid.has(d.id) && d.atsStationId).map((d) => d.live?.inverterW ?? null));
+      const atsOutLive = devices
+        .filter((d) => d.atsStationId && isStation.has(d.atsStationId))
+        .reduce((s, d) => {
+          const r = latest.find((x) => x.deviceId === d.id);
+          return s + (r && now.getTime() - r.ts.getTime() < LIVE_WINDOW_MS ? (r.inverterW ?? 0) : 0);
+        }, 0);
       // Solar breakers: output minus what the inverter drew from the grid = what solar/battery supplied.
       const breakerOwnSupply = () => {
         const out = livePower(isSolar);
@@ -206,9 +215,14 @@ export async function profileDashboard(profileId: string, now = new Date()): Pro
           livePower(isGrid),
           sumNullable(stationLive.filter((r) => unmetered.has(r.stationId)).map((r) => (r.gridW === null ? null : Math.max(r.gridW, 0)))),
         ]),
-        liveSolarW: sumNullable([breakerOwnSupply(), sumNullable(stationLive.map(inverterOwnSupply))]),
+        liveSolarW: sumNullable([
+          breakerOwnSupply(),
+          // This meter's inverters, minus what they feed through an ATS to breakers elsewhere (shown there).
+          stationLive.length ? Math.max((sumNullable(stationLive.map(inverterOwnSupply)) ?? 0) - atsOutLive, 0) : null,
+          atsLive,
+        ]),
         lastSolarAt: stationLive.reduce<number | null>((t, r) => Math.max(t ?? 0, r.ts.getTime()), null),
-        hasSolar: isSolar.size > 0 || isStation.size > 0,
+        hasSolar: isSolar.size > 0 || isStation.size > 0 || own.some((d) => d.atsStationId),
         todayGridKwh: round(withLive.filter((d) => isGrid.has(d.id)).reduce((s, d) => s + d.todayKwh, 0) + deyeDay(today, unmetered, "purchase")),
         todaySolarKwh: round(withLive.filter((d) => isSolar.has(d.id)).reduce((s, d) => s + d.todayKwh, 0) + deyeDay(today, isStation, "generation")),
         cycle,
@@ -371,6 +385,10 @@ export async function solarDashboard(meters: MeterDashboard[], now = new Date())
   const withStations = meters.filter((m) => stations.some((s) => s.meterId === m.meter.id) && m.cycle);
   // Every meter in the homes that have an inverter, for the whole-house split.
   const houseMeters = meters.filter((m) => stations.some((s) => s.profileId === m.meter.profileId));
+  const stationIds = new Set(ids);
+  const savingMeters = houseMeters.filter(
+    (m) => m.cycle?.solar && (stations.some((s) => s.meterId === m.meter.id) || m.devices.some((d) => d.atsStationId && stationIds.has(d.atsStationId))),
+  );
   let cycle: SolarView["cycle"] = null;
   if (withStations.length) {
     const totals = await Promise.all(
@@ -390,9 +408,10 @@ export async function solarDashboard(meters: MeterDashboard[], now = new Date())
       consumption: add("consumption"),
       purchase: add("purchase"),
       export: add("export"),
-      saving: round(withStations.reduce((s, m) => s + (m.cycle!.solar?.saving ?? 0), 0)),
-      billWithSolar: round(withStations.reduce((s, m) => s + m.cycle!.bill.total, 0)),
-      billWithoutSolar: round(withStations.reduce((s, m) => s + (m.cycle!.solar?.billWithoutSolar.total ?? m.cycle!.bill.total), 0)),
+      // Every meter the inverters save on: their own, and any a breaker's ATS moves onto them.
+      saving: round(savingMeters.reduce((s, m) => s + (m.cycle!.solar?.saving ?? 0), 0)),
+      billWithSolar: round(savingMeters.reduce((s, m) => s + m.cycle!.bill.total, 0)),
+      billWithoutSolar: round(savingMeters.reduce((s, m) => s + (m.cycle!.solar?.billWithoutSolar.total ?? m.cycle!.bill.total), 0)),
       start: first.cycle.start,
       end: first.cycle.end,
       daysElapsed: first.daysElapsed,
