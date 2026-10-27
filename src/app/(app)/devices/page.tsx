@@ -158,8 +158,8 @@ async function ProfileDevices({
                 </div>
                 {d.atsStationId && d.atsStart && d.atsEnd && (
                   <div className="text-sm text-muted-foreground">
-                    ATS {d.atsStart}–{d.atsEnd}: extra load on {stations.find((x) => x.id === d.atsStationId)?.name ?? "the inverter"} is
-                    left out of grid usage
+                    ATS {d.atsStart}–{d.atsEnd}: runs from {stations.find((x) => x.id === d.atsStationId)?.name ?? "the inverter"}, not
+                    counted as grid
                   </div>
                 )}
                 <div className="text-sm text-muted-foreground tabular-nums">
@@ -591,9 +591,9 @@ function AtsWindowForm({ device, stations }: { device: Device; stations: Station
       <div className="grid gap-1 sm:col-span-2 lg:col-span-4">
         <h4 className="text-sm font-medium">ATS window</h4>
         <p className="text-xs text-muted-foreground">
-          If an ATS moves some of this breaker&apos;s load onto the inverter at set times, the inverter counts that load too. During
-          the window, the rise in the inverter&apos;s load over its level in the 30 minutes before is left out of this breaker&apos;s
-          grid usage (never more than the breaker reads). Applies from now on.
+          If an ATS moves this breaker&apos;s circuit onto the inverter at set times, the inverter counts that load too. During the
+          window, this breaker&apos;s reading is counted as solar/inverter instead of grid, and the inverter&apos;s own meter keeps
+          the rest of its load. Applies from now on.
         </p>
       </div>
       <div className="grid gap-2">

@@ -1,27 +1,25 @@
 // One poll cycle: fetch all active devices in one batch, store readings and daily usage.
 // Runs in the standalone poller process (scripts/poller.ts).
-import { and, avg, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { getStatuses } from "@/lib/tuya/client";
 import { parseStatus } from "@/lib/tuya/decode";
 import { dhakaDay, energyDelta } from "@/lib/energy";
-import { atsWindowStart, BASELINE_MINUTES, inverterFedW, splitDelta } from "@/lib/ats";
+import { atsWindowStart, inverterFedW, splitDelta } from "@/lib/ats";
 
 type Device = typeof schema.devices.$inferSelect;
 
-// A Deye snapshot older than this is too old to judge what the inverter is feeding now.
+// A Deye snapshot older than this is too old to cap the breaker's reading with.
 const SOLAR_FRESH_MS = 15 * 60_000;
 
 /**
- * For a breaker inside its ATS window: the inverter's load now and its usual load before the window
- * opened. Null outside the window or when Deye data is missing (then nothing is excluded).
+ * For a breaker inside its ATS window: the inverter's total load now (null when Deye has nothing recent).
+ * Undefined outside the window.
  */
-async function atsLoads(device: Device, now: Date, cache: Map<string, { nowW: number; baselineW: number } | null>) {
-  if (!device.atsStart || !device.atsEnd || !device.atsStationId) return null;
-  const start = atsWindowStart(now, device.atsStart, device.atsEnd);
-  if (!start) return null;
-  const key = `${device.atsStationId}:${start.getTime()}`;
-  if (cache.has(key)) return cache.get(key)!;
+async function atsInverterLoad(device: Device, now: Date, cache: Map<string, number | null>) {
+  if (!device.atsStart || !device.atsEnd || !device.atsStationId) return undefined;
+  if (!atsWindowStart(now, device.atsStart, device.atsEnd)) return undefined;
+  if (cache.has(device.atsStationId)) return cache.get(device.atsStationId)!;
 
   const r = schema.solarReadings;
   const [latest] = await db
@@ -30,13 +28,8 @@ async function atsLoads(device: Device, now: Date, cache: Map<string, { nowW: nu
     .where(and(eq(r.stationId, device.atsStationId), gte(r.ts, new Date(now.getTime() - SOLAR_FRESH_MS))))
     .orderBy(desc(r.ts))
     .limit(1);
-  const [base] = await db
-    .select({ w: avg(r.consumptionW) })
-    .from(r)
-    .where(and(eq(r.stationId, device.atsStationId), gte(r.ts, new Date(start.getTime() - BASELINE_MINUTES * 60_000)), lt(r.ts, start)));
-
-  const value = latest?.w != null && base?.w != null ? { nowW: latest.w, baselineW: Number(base.w) } : null;
-  cache.set(key, value);
+  const value = latest?.w ?? null;
+  cache.set(device.atsStationId, value);
   return value;
 }
 
@@ -48,7 +41,7 @@ export async function pollOnce(now = new Date()): Promise<PollSummary> {
   if (devices.length === 0) return summary;
 
   const statuses = await getStatuses(devices.map((d) => d.tuyaDeviceId));
-  const atsCache = new Map<string, { nowW: number; baselineW: number } | null>();
+  const atsCache = new Map<string, number | null>();
 
   for (const device of devices) {
     const status = statuses.get(device.tuyaDeviceId);
@@ -71,13 +64,10 @@ export async function pollOnce(now = new Date()): Promise<PollSummary> {
       summary.notes.push(`${device.name}: ${delta.kind} (${prevKwh} → ${m.energyKwh} kWh, counted ${delta.kwh})`);
     }
 
-    // ATS window: the part of this breaker's load the inverter is feeding isn't grid usage.
-    const ats = m.powerW !== null ? await atsLoads(device, now, atsCache) : null;
-    const fedW = ats ? inverterFedW(m.powerW!, ats.nowW, ats.baselineW) : null;
+    // ATS window: the breaker's circuit runs from the inverter, so its reading isn't grid usage.
+    const inverterLoad = m.powerW !== null ? await atsInverterLoad(device, now, atsCache) : undefined;
+    const fedW = inverterLoad === undefined ? null : inverterFedW(m.powerW!, inverterLoad);
     const split = delta && delta.kwh > 0 ? splitDelta(delta.kwh, m.powerW ?? 0, fedW ?? 0) : null;
-    if (device.atsStart && device.atsStationId && atsWindowStart(now, device.atsStart, device.atsEnd ?? "") && !ats) {
-      summary.notes.push(`${device.name}: in ATS window but no recent Deye data, nothing excluded`);
-    }
 
     await db.transaction(async (tx) => {
       await tx.insert(schema.readings).values({

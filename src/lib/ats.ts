@@ -1,10 +1,7 @@
-// ATS windows: part of a breaker's load is switched onto a Deye inverter for set hours each day.
-// The inverter counts that load too, so it is taken out of the breaker's grid usage. Pure functions.
+// ATS windows: a breaker's circuit is switched onto a Deye inverter for set hours each day. The inverter
+// counts that load too, so during the window the breaker's reading is inverter-fed, not grid. Pure functions.
 import { formatInTimeZone } from "date-fns-tz";
 import { TIMEZONE } from "@/lib/energy";
-
-/** How far back from the window start the inverter's usual load is averaged. */
-export const BASELINE_MINUTES = 30;
 
 const HHMM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
@@ -36,11 +33,13 @@ export function atsWindowStart(now: Date, start: string, end: string): Date | nu
 }
 
 /**
- * Power on the breaker that the inverter is feeding through the ATS: how much the inverter's load rose
- * over its usual (pre-window) level, never more than the breaker itself reads.
+ * Power on the breaker that the inverter is feeding through the ATS: the breaker's whole reading, since
+ * the ATS has moved its circuit onto the inverter. Never more than the inverter's total load when Deye
+ * has a recent figure (it can't deliver more than it puts out); the breaker's reading alone when not.
  */
-export function inverterFedW(breakerW: number, inverterLoadW: number, baselineW: number) {
-  return Math.min(Math.max(breakerW, 0), Math.max(inverterLoadW - baselineW, 0));
+export function inverterFedW(breakerW: number, inverterLoadW: number | null) {
+  const w = Math.max(breakerW, 0);
+  return inverterLoadW === null ? w : Math.min(w, Math.max(inverterLoadW, 0));
 }
 
 /** Splits a breaker's kWh for one poll into grid and inverter-fed parts, in proportion to power. */

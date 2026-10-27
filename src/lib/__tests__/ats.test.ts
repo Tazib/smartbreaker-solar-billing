@@ -31,16 +31,16 @@ describe("atsWindowStart", () => {
 });
 
 describe("inverterFedW", () => {
-  it("is the rise in inverter load over its usual level (1500 − 700)", () => {
-    expect(inverterFedW(1200, 1500, 700)).toBe(800);
+  it("is the breaker's whole reading while the ATS has it on the inverter", () => {
+    expect(inverterFedW(800, 1500)).toBe(800);
   });
 
-  it("never exceeds what the breaker reads", () => {
-    expect(inverterFedW(500, 1500, 700)).toBe(500);
+  it("never exceeds the inverter's total load", () => {
+    expect(inverterFedW(900, 600)).toBe(600);
   });
 
-  it("is zero when the inverter load fell below its usual level", () => {
-    expect(inverterFedW(900, 600, 700)).toBe(0);
+  it("uses the breaker's reading when Deye has nothing recent", () => {
+    expect(inverterFedW(800, null)).toBe(800);
   });
 });
 
